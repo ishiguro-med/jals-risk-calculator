@@ -1,0 +1,426 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#3b82f6">
+    <title>久山町スコア 動脈硬化性疾患リスク計算</title>
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+</head>
+<body>
+    <div id="root"></div>
+    <script type="text/babel">
+        const { useState, useRef } = React;
+        const { jsPDF } = window.jspdf;
+
+        // ガイドライン2022年版 久山町スコア ポイント合計→10年リスク対応表（原文より）
+        const RISK_TABLE = {
+            "40-49": { 0:"<1.0%",1:"<1.0%",2:"<1.0%",3:"<1.0%",4:"<1.0%",5:"<1.0%",6:"<1.0%",7:"<1.0%",8:"1.1%",9:"1.3%",10:"1.4%",11:"1.7%",12:"1.9%",13:"2.2%",14:"2.6%",15:"3.0%",16:"3.4%",17:"3.9%",18:"4.5%",19:"5.2%" },
+            "50-59": { 0:"<1.0%",1:"<1.0%",2:"<1.0%",3:"1.1%",4:"1.3%",5:"1.4%",6:"1.7%",7:"1.9%",8:"2.2%",9:"2.6%",10:"3.0%",11:"3.4%",12:"3.9%",13:"4.5%",14:"5.2%",15:"6.0%",16:"6.9%",17:"7.9%",18:"9.1%",19:"10.4%" },
+            "60-69": { 0:"1.7%",1:"1.9%",2:"2.2%",3:"2.6%",4:"3.0%",5:"3.4%",6:"3.9%",7:"4.5%",8:"5.2%",9:"6.0%",10:"6.9%",11:"7.9%",12:"9.1%",13:"10.4%",14:"11.9%",15:"13.6%",16:"15.5%",17:"17.7%",18:"20.2%",19:"22.9%" },
+            "70-79": { 0:"3.4%",1:"3.9%",2:"4.5%",3:"5.2%",4:"6.0%",5:"6.9%",6:"7.9%",7:"9.1%",8:"10.4%",9:"11.9%",10:"13.6%",11:"15.5%",12:"17.7%",13:"20.2%",14:"22.9%",15:"25.9%",16:"29.3%",17:"33.0%",18:"37.0%",19:"41.1%" }
+        };
+
+        function getAgeGroup(age) {
+            if (age >= 40 && age <= 49) return "40-49";
+            if (age >= 50 && age <= 59) return "50-59";
+            if (age >= 60 && age <= 69) return "60-69";
+            if (age >= 70 && age <= 79) return "70-79";
+            return null;
+        }
+
+        function getRiskLevel(riskStr) {
+            if (!riskStr) return { level: "計算不可", color: "bg-gray-400", ldl: "-" };
+            const val = parseFloat(riskStr.replace("<","").replace("%",""));
+            if (riskStr.startsWith("<1") || val < 2) return { level: "低リスク", color: "bg-green-500", ldl: "160mg/dL未満" };
+            if (val < 10) return { level: "中リスク", color: "bg-yellow-500", ldl: "140mg/dL未満" };
+            return { level: "高リスク", color: "bg-red-600", ldl: "120mg/dL未満" };
+        }
+
+        function Heart({ size=24, className="" }) {
+            return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className={className}><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"></path></svg>;
+        }
+        function RotateCcw({ size=24, className="" }) {
+            return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className={className}><polyline points="1 4 1 10 7 10"></polyline><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path></svg>;
+        }
+        function Calculator({ size=24, className="" }) {
+            return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className={className}><rect x="4" y="2" width="16" height="20" rx="2"></rect><line x1="8" y1="6" x2="16" y2="6"></line><line x1="8" y1="10" x2="16" y2="10"></line><line x1="8" y1="14" x2="16" y2="14"></line><line x1="8" y1="18" x2="16" y2="18"></line></svg>;
+        }
+        function Info({ size=24, className="" }) {
+            return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className={className}><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>;
+        }
+        function FileText({ size=24, className="" }) {
+            return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className={className}><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line></svg>;
+        }
+
+        function App() {
+            const [form, setForm] = useState({ patientId:"", age:"", gender:"female", sbp:"", ldl:"", hdl:"", igt:false, smoking:false, diabetes:false, ckd:false, pad:false, secondary:false });
+            const [result, setResult] = useState(null);
+            const [showGuide, setShowGuide] = useState(false);
+            const pdfRef = useRef(null);
+
+            const set = (k, v) => setForm(f => ({...f, [k]: v}));
+
+            const calculate = () => {
+                // 二次予防・高リスク病態チェック
+                if (form.secondary) {
+                    setResult({ type: "secondary" });
+                    return;
+                }
+                if (form.diabetes || form.ckd || form.pad) {
+                    setResult({ type: "high_disease" });
+                    return;
+                }
+
+                const age = parseInt(form.age);
+                const ageGroup = getAgeGroup(age);
+                if (!ageGroup) {
+                    alert("年齢は40〜79歳の範囲で入力してください");
+                    return;
+                }
+
+                let score = 0;
+                const bd = {};
+
+                // ①性別
+                bd.gender = form.gender === "male" ? 7 : 0;
+                score += bd.gender;
+
+                // ②収縮期血圧
+                const sbp = parseInt(form.sbp);
+                if (sbp < 120) bd.sbp = 0;
+                else if (sbp <= 129) bd.sbp = 1;
+                else if (sbp <= 139) bd.sbp = 2;
+                else if (sbp <= 159) bd.sbp = 3;
+                else bd.sbp = 4;
+                score += bd.sbp;
+
+                // ③糖代謝異常（耐糖能異常・糖尿病は含まない）
+                bd.igt = form.igt ? 1 : 0;
+                score += bd.igt;
+
+                // ④LDL-C
+                const ldl = parseInt(form.ldl);
+                if (ldl < 120) bd.ldl = 0;
+                else if (ldl <= 139) bd.ldl = 1;
+                else if (ldl <= 159) bd.ldl = 2;
+                else bd.ldl = 3;
+                score += bd.ldl;
+
+                // ⑤HDL-C
+                const hdl = parseInt(form.hdl);
+                if (hdl >= 60) bd.hdl = 0;
+                else if (hdl >= 40) bd.hdl = 1;
+                else bd.hdl = 2;
+                score += bd.hdl;
+
+                // ⑥喫煙（現在喫煙者のみ。過去喫煙者はなし）
+                bd.smoking = form.smoking ? 2 : 0;
+                score += bd.smoking;
+
+                const cappedScore = Math.min(score, 19);
+                const riskStr = RISK_TABLE[ageGroup][cappedScore];
+                const { level, color, ldl: ldlTarget } = getRiskLevel(riskStr);
+
+                setResult({ type: "score", score, cappedScore, ageGroup, riskStr, level, color, ldlTarget, bd, age, sbp, ldl, hdl });
+            };
+
+            const reset = () => {
+                setForm({ patientId:"", age:"", gender:"female", sbp:"", ldl:"", hdl:"", igt:false, smoking:false, diabetes:false, ckd:false, pad:false, secondary:false });
+                setResult(null);
+                setShowGuide(false);
+            };
+
+            const generatePDF = async () => {
+                const el = pdfRef.current;
+                const canvas = await html2canvas(el, { scale: 2, backgroundColor: '#ffffff' });
+                const imgData = canvas.toDataURL('image/png');
+                const pdf = new jsPDF('p', 'mm', 'a4');
+                const pw = pdf.internal.pageSize.getWidth();
+                const ph = pdf.internal.pageSize.getHeight();
+                const ratio = Math.min(pw / canvas.width, ph / canvas.height);
+                pdf.addImage(imgData, 'PNG', (pw - canvas.width * ratio) / 2, 0, canvas.width * ratio, canvas.height * ratio);
+                const now = new Date();
+                const fname = form.patientId
+                    ? `Hisayama_${form.patientId}_${now.getFullYear()}${String(now.getMonth()+1).padStart(2,'0')}${String(now.getDate()).padStart(2,'0')}.pdf`
+                    : `Hisayama_Score_${now.getFullYear()}${String(now.getMonth()+1).padStart(2,'0')}${String(now.getDate()).padStart(2,'0')}.pdf`;
+                pdf.save(fname);
+            };
+
+            const now = new Date();
+            const dateStr = `${now.getFullYear()}年${now.getMonth()+1}月${now.getDate()}日 ${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
+
+            return (
+                <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 p-4">
+                    <div className="max-w-xl mx-auto space-y-5">
+
+                        {/* ヘッダー */}
+                        <div className="bg-white rounded-2xl shadow-lg p-5">
+                            <div className="flex items-center gap-3 mb-1">
+                                <Heart size={30} className="text-red-500" />
+                                <h1 className="text-xl font-bold text-gray-800">動脈硬化性疾患リスク計算</h1>
+                            </div>
+                            <p className="text-xs text-gray-500">久山町スコア｜動脈硬化性疾患予防ガイドライン2022年版</p>
+                        </div>
+
+                        {/* 入力フォーム */}
+                        <form onSubmit={e => { e.preventDefault(); calculate(); }} className="bg-white rounded-2xl shadow-lg p-5 space-y-4">
+                            <h2 className="text-base font-semibold text-gray-800 flex items-center gap-2"><Calculator size={18} />患者情報入力</h2>
+
+                            <div>
+                                <label className="block text-xs font-medium text-gray-600 mb-1">患者ID（任意）</label>
+                                <input type="text" value={form.patientId} onChange={e=>set("patientId",e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-400" placeholder="例: 12345678" />
+                            </div>
+
+                            {/* 二次予防・高リスク病態 */}
+                            <div className="bg-red-50 rounded-xl p-3 space-y-2">
+                                <p className="text-xs font-semibold text-red-700">⚠️ 以下に該当する場合はスコアを使わず直接リスク分類されます</p>
+                                <label className="flex items-center gap-2 text-sm">
+                                    <input type="checkbox" checked={form.secondary} onChange={e=>set("secondary",e.target.checked)} className="w-4 h-4" />
+                                    <span className="text-gray-700">冠動脈疾患またはアテローム血栓性脳梗塞の既往（二次予防）</span>
+                                </label>
+                                <label className="flex items-center gap-2 text-sm">
+                                    <input type="checkbox" checked={form.diabetes} onChange={e=>set("diabetes",e.target.checked)} className="w-4 h-4" />
+                                    <span className="text-gray-700">糖尿病あり（高リスク病態）</span>
+                                </label>
+                                <label className="flex items-center gap-2 text-sm">
+                                    <input type="checkbox" checked={form.ckd} onChange={e=>set("ckd",e.target.checked)} className="w-4 h-4" />
+                                    <span className="text-gray-700">慢性腎臓病（CKD）あり（高リスク病態）</span>
+                                </label>
+                                <label className="flex items-center gap-2 text-sm">
+                                    <input type="checkbox" checked={form.pad} onChange={e=>set("pad",e.target.checked)} className="w-4 h-4" />
+                                    <span className="text-gray-700">末梢動脈疾患（PAD）あり（高リスク病態）</span>
+                                </label>
+                            </div>
+
+                            {/* スコア計算項目 */}
+                            <div className="space-y-3">
+                                <div>
+                                    <label className="block text-xs font-medium text-gray-600 mb-1">①性別</label>
+                                    <div className="flex gap-4">
+                                        {[["female","女性 (0点)"],["male","男性 (7点)"]].map(([v,l])=>(
+                                            <label key={v} className="flex items-center gap-2 text-sm">
+                                                <input type="radio" value={v} checked={form.gender===v} onChange={e=>set("gender",e.target.value)} className="w-4 h-4" />{l}
+                                            </label>
+                                        ))}
+                                    </div>
+                                </div>
+
+                                <div>
+                                    <label className="block text-xs font-medium text-gray-600 mb-1">年齢（40〜79歳）</label>
+                                    <input type="number" value={form.age} onChange={e=>set("age",e.target.value)} min="40" max="79" required className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm" placeholder="例: 60" />
+                                </div>
+
+                                <div>
+                                    <label className="block text-xs font-medium text-gray-600 mb-1">②収縮期血圧 (mmHg)</label>
+                                    <input type="number" value={form.sbp} onChange={e=>set("sbp",e.target.value)} required className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm" placeholder="例: 135" />
+                                    <p className="text-xs text-gray-400 mt-1">&lt;120→0点、120-129→1点、130-139→2点、140-159→3点、160≥→4点</p>
+                                </div>
+
+                                <div>
+                                    <label className="block text-xs font-medium text-gray-600 mb-1">④LDL-C (mg/dL)</label>
+                                    <input type="number" value={form.ldl} onChange={e=>set("ldl",e.target.value)} required className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm" placeholder="例: 130" />
+                                    <p className="text-xs text-gray-400 mt-1">&lt;120→0点、120-139→1点、140-159→2点、160≥→3点</p>
+                                </div>
+
+                                <div>
+                                    <label className="block text-xs font-medium text-gray-600 mb-1">⑤HDL-C (mg/dL)</label>
+                                    <input type="number" value={form.hdl} onChange={e=>set("hdl",e.target.value)} required className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm" placeholder="例: 55" />
+                                    <p className="text-xs text-gray-400 mt-1">≥60→0点、40-59→1点、&lt;40→2点</p>
+                                </div>
+
+                                <div className="space-y-2">
+                                    <label className="flex items-center gap-2 text-sm">
+                                        <input type="checkbox" checked={form.igt} onChange={e=>set("igt",e.target.checked)} className="w-4 h-4" />
+                                        <span>③糖代謝異常あり (+1点)　<span className="text-xs text-gray-500">※耐糖能異常（糖尿病を除く）</span></span>
+                                    </label>
+                                    <label className="flex items-center gap-2 text-sm">
+                                        <input type="checkbox" checked={form.smoking} onChange={e=>set("smoking",e.target.checked)} className="w-4 h-4" />
+                                        <span>⑥現在喫煙あり (+2点)　<span className="text-xs text-gray-500">※過去喫煙者は「なし」</span></span>
+                                    </label>
+                                </div>
+                            </div>
+
+                            <div className="flex gap-3">
+                                <button type="submit" className="flex-1 bg-blue-600 text-white py-3 rounded-lg font-medium flex items-center justify-center gap-2 hover:bg-blue-700">
+                                    <Calculator size={18} />計算する
+                                </button>
+                                <button type="button" onClick={reset} className="px-5 bg-gray-200 text-gray-700 py-3 rounded-lg hover:bg-gray-300">
+                                    <RotateCcw size={18} />
+                                </button>
+                            </div>
+                        </form>
+
+                        {/* 結果表示 */}
+                        {result && result.type === "secondary" && (
+                            <div className="bg-white rounded-2xl shadow-lg p-5">
+                                <h2 className="text-base font-semibold text-gray-800 mb-3">評価結果</h2>
+                                <div className="bg-purple-600 text-white rounded-xl p-4 text-center">
+                                    <div className="text-xl font-bold mb-1">二次予防</div>
+                                    <div className="text-sm">冠動脈疾患またはアテローム血栓性脳梗塞の既往あり</div>
+                                </div>
+                                <div className="mt-3 bg-purple-50 rounded-lg p-3 text-sm">
+                                    <p className="font-semibold text-purple-800">LDL-C管理目標: 100mg/dL未満</p>
+                                    <p className="text-gray-600 mt-1 text-xs">急性冠症候群・家族性高コレステロール血症・糖尿病・冠動脈疾患とアテローム血栓性脳梗塞の合併がある場合は70mg/dL未満</p>
+                                </div>
+                            </div>
+                        )}
+
+                        {result && result.type === "high_disease" && (
+                            <div className="bg-white rounded-2xl shadow-lg p-5">
+                                <h2 className="text-base font-semibold text-gray-800 mb-3">評価結果</h2>
+                                <div className="bg-red-600 text-white rounded-xl p-4 text-center">
+                                    <div className="text-xl font-bold mb-1">高リスク（一次予防）</div>
+                                    <div className="text-sm">糖尿病・CKD・PADのいずれかあり</div>
+                                </div>
+                                <div className="mt-3 bg-red-50 rounded-lg p-3 text-sm">
+                                    <p className="font-semibold text-red-800">LDL-C管理目標: 120mg/dL未満</p>
+                                    <p className="text-gray-600 mt-1 text-xs">糖尿病でPAD・細小血管症合併または喫煙ありの場合は100mg/dL未満</p>
+                                </div>
+                            </div>
+                        )}
+
+                        {result && result.type === "score" && (
+                            <>
+                                <div className="bg-white rounded-2xl shadow-lg p-5">
+                                    <h2 className="text-base font-semibold text-gray-800 mb-3">評価結果</h2>
+                                    <div className="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-xl p-5 space-y-3">
+                                        <div className="text-center">
+                                            <div className="text-5xl font-bold text-blue-600">{result.score}</div>
+                                            <div className="text-xs text-gray-500 mt-1">久山町スコア合計（{result.ageGroup}歳）</div>
+                                        </div>
+                                        <div className={`${result.color} text-white rounded-lg p-4 text-center`}>
+                                            <div className="text-xl font-bold mb-1">{result.level}</div>
+                                            <div className="text-sm">10年間の動脈硬化性疾患発症リスク: {result.riskStr}</div>
+                                        </div>
+                                        <div className="bg-white rounded-lg p-3 border-l-4 border-blue-500">
+                                            <div className="text-sm font-semibold text-gray-800">LDL-C管理目標値</div>
+                                            <div className="text-base font-bold text-blue-700 mt-1">{result.ldlTarget}</div>
+                                        </div>
+                                        <div className="text-xs text-gray-500 bg-white rounded-lg p-3">
+                                            <div className="font-semibold mb-1">スコア内訳</div>
+                                            <div className="grid grid-cols-2 gap-1">
+                                                <div>性別: {result.bd.gender}点</div>
+                                                <div>収縮期血圧: {result.bd.sbp}点</div>
+                                                <div>糖代謝異常: {result.bd.igt}点</div>
+                                                <div>LDL-C: {result.bd.ldl}点</div>
+                                                <div>HDL-C: {result.bd.hdl}点</div>
+                                                <div>喫煙: {result.bd.smoking}点</div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div className="mt-3 space-y-2">
+                                        <button onClick={generatePDF} className="w-full bg-green-600 text-white py-3 rounded-lg font-medium flex items-center justify-center gap-2 hover:bg-green-700">
+                                            <FileText size={18} />PDFで保存
+                                        </button>
+                                        <button onClick={()=>setShowGuide(!showGuide)} className="w-full bg-indigo-50 text-indigo-700 py-3 rounded-lg font-medium flex items-center justify-center gap-2 hover:bg-indigo-100">
+                                            <Info size={18} />{showGuide ? "ガイドラインを閉じる" : "ガイドライン・計算根拠を表示"}
+                                        </button>
+                                    </div>
+                                </div>
+
+                                {/* PDF用非表示コンテンツ */}
+                                <div ref={pdfRef} style={{position:'absolute',left:'-9999px',width:'750px',backgroundColor:'white',padding:'40px',fontFamily:'sans-serif'}}>
+                                    <div style={{borderBottom:'3px solid #3b82f6',paddingBottom:'15px',marginBottom:'20px',textAlign:'center'}}>
+                                        <h1 style={{fontSize:'22px',fontWeight:'bold',color:'#1e3a5f',margin:0}}>動脈硬化性疾患リスク評価レポート</h1>
+                                        <p style={{fontSize:'12px',color:'#6b7280',margin:'5px 0 0'}}>久山町スコア｜動脈硬化性疾患予防ガイドライン2022年版</p>
+                                    </div>
+                                    <div style={{fontSize:'12px',color:'#4b5563',marginBottom:'15px'}}>
+                                        <div>評価日時: {dateStr}</div>
+                                        {form.patientId && <div>患者ID: {form.patientId}</div>}
+                                    </div>
+                                    <div style={{backgroundColor:'#f3f4f6',borderRadius:'8px',padding:'15px',marginBottom:'20px'}}>
+                                        <h2 style={{fontSize:'15px',fontWeight:'bold',marginBottom:'10px',color:'#1f2937'}}>患者情報</h2>
+                                        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'8px',fontSize:'13px'}}>
+                                            <div><strong>性別:</strong> {result.bd.gender===7?'男性':'女性'}</div>
+                                            <div><strong>年齢:</strong> {result.age}歳（{result.ageGroup}歳代）</div>
+                                            <div><strong>収縮期血圧:</strong> {result.sbp} mmHg</div>
+                                            <div><strong>LDL-C:</strong> {result.ldl} mg/dL</div>
+                                            <div><strong>HDL-C:</strong> {result.hdl} mg/dL</div>
+                                            <div><strong>糖代謝異常:</strong> {form.igt?'あり':'なし'}</div>
+                                            <div><strong>現在喫煙:</strong> {form.smoking?'あり':'なし'}</div>
+                                        </div>
+                                    </div>
+                                    <div style={{backgroundColor:'#eff6ff',borderRadius:'8px',padding:'20px',marginBottom:'20px',textAlign:'center'}}>
+                                        <div style={{fontSize:'42px',fontWeight:'bold',color:'#2563eb'}}>{result.score}点</div>
+                                        <div style={{fontSize:'12px',color:'#6b7280',marginBottom:'15px'}}>久山町スコア合計</div>
+                                        <div style={{padding:'15px',backgroundColor:result.level==='低リスク'?'#22c55e':result.level==='中リスク'?'#eab308':'#dc2626',color:'white',borderRadius:'8px',marginBottom:'15px'}}>
+                                            <div style={{fontSize:'20px',fontWeight:'bold'}}>{result.level}</div>
+                                            <div style={{fontSize:'13px',marginTop:'5px'}}>10年間の動脈硬化性疾患発症リスク: {result.riskStr}</div>
+                                        </div>
+                                        <div style={{backgroundColor:'white',borderRadius:'8px',padding:'12px',borderLeft:'4px solid #3b82f6',textAlign:'left'}}>
+                                            <div style={{fontSize:'13px',fontWeight:'bold',color:'#1f2937'}}>LDL-C管理目標値</div>
+                                            <div style={{fontSize:'16px',fontWeight:'bold',color:'#2563eb',marginTop:'4px'}}>{result.ldlTarget}</div>
+                                        </div>
+                                    </div>
+                                    <div style={{backgroundColor:'#f9fafb',borderRadius:'8px',padding:'15px',marginBottom:'15px'}}>
+                                        <h2 style={{fontSize:'14px',fontWeight:'bold',marginBottom:'10px',color:'#1f2937'}}>スコア内訳</h2>
+                                        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:'8px',fontSize:'12px'}}>
+                                            <div>①性別: <strong>{result.bd.gender}点</strong></div>
+                                            <div>②収縮期血圧: <strong>{result.bd.sbp}点</strong></div>
+                                            <div>③糖代謝異常: <strong>{result.bd.igt}点</strong></div>
+                                            <div>④LDL-C: <strong>{result.bd.ldl}点</strong></div>
+                                            <div>⑤HDL-C: <strong>{result.bd.hdl}点</strong></div>
+                                            <div>⑥喫煙: <strong>{result.bd.smoking}点</strong></div>
+                                        </div>
+                                    </div>
+                                    <div style={{fontSize:'10px',color:'#6b7280',borderTop:'1px solid #e5e7eb',paddingTop:'12px',lineHeight:'1.6'}}>
+                                        <p>参考: 日本動脈硬化学会「動脈硬化性疾患予防ガイドライン2022年版」久山町スコア</p>
+                                        <p>本評価は臨床判断の補助ツールです。最終的な診断・治療方針は担当医の判断に委ねられます。</p>
+                                    </div>
+                                </div>
+                            </>
+                        )}
+
+                        {/* ガイドライン */}
+                        {showGuide && result && result.type === "score" && (
+                            <div className="bg-white rounded-2xl shadow-lg p-5 text-sm space-y-4">
+                                <h2 className="font-semibold text-gray-800">久山町スコア｜計算根拠（2022年版）</h2>
+                                <div>
+                                    <h3 className="font-semibold text-gray-700 mb-2">◆ スコアリング配点（ガイドライン原文）</h3>
+                                    <div className="bg-gray-50 rounded-lg p-3 text-xs space-y-1">
+                                        <div><strong>①性別:</strong> 女性0点 / 男性7点</div>
+                                        <div><strong>②収縮期血圧:</strong> &lt;120→0 / 120-129→1 / 130-139→2 / 140-159→3 / 160≥→4</div>
+                                        <div><strong>③糖代謝異常（耐糖能異常・糖尿病は除く）:</strong> なし0 / あり1</div>
+                                        <div><strong>④LDL-C:</strong> &lt;120→0 / 120-139→1 / 140-159→2 / 160≥→3</div>
+                                        <div><strong>⑤HDL-C:</strong> ≥60→0 / 40-59→1 / &lt;40→2</div>
+                                        <div><strong>⑥喫煙（現在喫煙のみ）:</strong> なし0 / あり2</div>
+                                    </div>
+                                </div>
+                                <div>
+                                    <h3 className="font-semibold text-gray-700 mb-2">◆ リスク分類基準</h3>
+                                    <div className="text-xs space-y-1">
+                                        <div className="flex items-center gap-2"><div className="w-3 h-3 bg-green-500 rounded"></div>低リスク: 10年リスク2%未満　LDL-C目標&lt;160</div>
+                                        <div className="flex items-center gap-2"><div className="w-3 h-3 bg-yellow-500 rounded"></div>中リスク: 10年リスク2-10%未満　LDL-C目標&lt;140</div>
+                                        <div className="flex items-center gap-2"><div className="w-3 h-3 bg-red-600 rounded"></div>高リスク: 10年リスク10%以上　LDL-C目標&lt;120</div>
+                                    </div>
+                                </div>
+                                <div>
+                                    <h3 className="font-semibold text-gray-700 mb-2">◆ 注意事項</h3>
+                                    <div className="text-xs text-gray-600 space-y-1">
+                                        <div>• 対象年齢: 40〜79歳（80歳以上は個別判断）</div>
+                                        <div>• 糖尿病・CKD・PADがある場合は高リスク（スコア不使用）</div>
+                                        <div>• 二次予防（冠動脈疾患・アテローム血栓性脳梗塞の既往）はLDL-C&lt;100</div>
+                                        <div>• 過去喫煙者は喫煙「なし」として計算</div>
+                                        <div>• 本スコアはオリジナル久山町スコアと一部異なる（CKD・運動習慣を除外等）</div>
+                                    </div>
+                                </div>
+                                <div className="text-xs text-gray-400 border-t pt-2">
+                                    出典: 日本動脈硬化学会「動脈硬化性疾患予防ガイドライン2022年版」図3-2
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            );
+        }
+
+        ReactDOM.render(<App />, document.getElementById('root'));
+    </script>
+</body>
+</html>
